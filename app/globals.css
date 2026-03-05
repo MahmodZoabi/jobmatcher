@@ -1,0 +1,80 @@
+@import "tailwindcss";
+
+:root {
+  --background: #060a14;
+  --foreground: #e5e7eb;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-inter);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-inter), system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+}
+
+/* Landing page decorative background */
+.gradient-mesh {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at top left, rgba(59, 130, 246, 0.35), transparent 55%),
+    radial-gradient(circle at bottom right, rgba(16, 185, 129, 0.28), transparent 58%),
+    radial-gradient(circle at top right, rgba(236, 72, 153, 0.18), transparent 52%);
+  opacity: 0.75;
+  filter: blur(40px);
+  pointer-events: none;
+}
+
+.grid-overlay {
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(
+      to right,
+      rgba(148, 163, 184, 0.12) 1px,
+      transparent 1px
+    ),
+    linear-gradient(to bottom, rgba(148, 163, 184, 0.12) 1px, transparent 1px);
+  background-size: 32px 32px;
+  mask-image: radial-gradient(circle at center, black, transparent 70%);
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.hero-glow {
+  position: absolute;
+  inset: auto;
+  bottom: -40%;
+  width: 140%;
+  left: -20%;
+  height: 60%;
+  background: radial-gradient(
+    ellipse at top,
+    rgba(59, 130, 246, 0.45),
+    transparent 60%
+  );
+  opacity: 0.7;
+  filter: blur(40px);
+  pointer-events: none;
+}
+
+/* Simple fade-up animation for sections */
+@keyframes fade-up {
+  0% {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-up {
+  animation: fade-up 700ms ease-out forwards;
+}
