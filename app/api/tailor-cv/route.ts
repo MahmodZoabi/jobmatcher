@@ -35,28 +35,36 @@ export async function POST(req: NextRequest) {
     const missingSkills = job.missingSkills ?? [];
     const gaps = job.gaps ?? [];
 
-    const rewritePrompt = `You are a professional CV editor. Rewrite this CV to be optimized for the specific job listing below.
+    const rewritePrompt = `You are an expert CV writer whose job is to make this candidate look like the best possible fit for this specific role.
 
-Rules:
-- Keep ALL real information — never invent experience, skills, or achievements the candidate doesn't have
-- Reorder sections to put the most relevant experience first
-- Rewrite bullet points to use keywords from the job listing where honestly applicable
-- Emphasize matching skills and relevant achievements
-- Add a tailored professional summary at the top (2-3 sentences targeting this role)
-- If the candidate has transferable skills that relate to a requirement, highlight that connection
-- Keep the same overall structure (sections, dates, companies) but optimize the wording
-- Format cleanly with clear sections
+YOUR GOAL: A recruiter reads this CV and thinks 'this person was made for this job.' Every line should connect the candidate to what the job requires.
+
+STRATEGY:
+- Read the job listing carefully. Identify the key requirements: required skills, responsibilities, qualifications, and the type of person they want.
+- Now go through the candidate's ENTIRE background — experience, projects, education, and everything they've done — and find every connection to those requirements, even indirect ones.
+- INFER relevant skills from their experience that they didn't explicitly list, but ONLY if those skills are relevant to THIS job. For example: if the job requires 'resource planning' and the candidate managed 50 people, add 'resource planning'. If the job requires 'data modeling' and they built a database project, add 'data modeling'. Don't add skills that aren't relevant to the target role.
+- Rewrite bullet points to mirror the job's language. If the job says 'cross-functional collaboration' and the candidate worked across teams, use that exact phrase.
+- Reorder sections so the most relevant content appears first. If the job values skills over education, put skills higher. If it values experience, lead with that.
+- The Professional Summary should be 2-3 sentences that directly address what the job is looking for and why this candidate delivers it.
+
+CRITICAL CONSTRAINTS:
+- The CV MUST fit on ONE page. Maximum 3000 characters. This is non-negotiable.
+- Prioritize ruthlessly. Only include what strengthens the case for THIS job.
+- Skills section: pick the 8-12 most relevant skills only. Group them logically.
+- Projects: pick 2-3 most relevant, 2 bullet points each max.
+- Employment: 3-4 bullet points max per role, rewritten to emphasize relevance to the target job.
+- Languages and soft skills: one line each.
+- NEVER invent experience or skills the candidate doesn't have. Only reframe, reorder, and surface what's already there.
+- Do NOT include LinkedIn links, profile links, URLs, or placeholders like [Link] or [Profile].
+- Contact info: Name, Phone, Email, City — one or two lines max.
+- Section headers in ALL CAPS.
+- Output clean plain text only.
 
 CANDIDATE CV:
 ${cvText}
 
 JOB LISTING:
 ${jobText}
-
-ANALYSIS (what matches and what's missing):
-Matching skills: ${JSON.stringify(matchingSkills)}
-Missing skills: ${JSON.stringify(missingSkills)}
-Gaps: ${JSON.stringify(gaps)}
 
 Return ONLY the rewritten CV text. No commentary.`.trim();
 

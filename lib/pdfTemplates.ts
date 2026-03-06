@@ -6,8 +6,6 @@ const PAGE_W = 210;
 const PAGE_H = 297;
 
 const BLACK: [number, number, number] = [0, 0, 0];
-const DARK:  [number, number, number] = [20, 20, 30];
-const GREY:  [number, number, number] = [100, 110, 130];
 
 // ─── Text cleaning ────────────────────────────────────────────────────────────
 
@@ -23,8 +21,8 @@ function cleanLine(text: string): string {
     .replace(/\[(?:link|profile|linkedin|github|url|here|website|portfolio|view)[^\]]*\]/gi, "")
     // Any remaining short bracket expressions (typically all placeholders in CVs)
     .replace(/\[[^\]]{1,40}\]/g, "")
-    // Full social URLs
-    .replace(/https?:\/\/(?:www\.)?(?:linkedin|github)\.com\/[^\s|,]*/gi, "")
+    // All HTTP/HTTPS URLs
+    .replace(/https?:\/\/[^\s|,]*/gi, "")
     // Bare social tokens
     .replace(/(?:linkedin|github)\.com\/[^\s|,]*/gi, "")
     // Orphaned separators after removals
@@ -35,12 +33,13 @@ function cleanLine(text: string): string {
     .trim();
 }
 
-/** Strip markdown bold/italic markers, return plain text */
+/** Strip markdown bold/italic markers and raw asterisks, return plain text */
 function plain(text: string): string {
   return text
     .replace(/\*\*(.+?)\*\*/g, "$1")
     .replace(/\*(.+?)\*/g, "$1")
-    .replace(/_(.+?)_/g, "$1");
+    .replace(/_(.+?)_/g, "$1")
+    .replace(/\*/g, "");
 }
 
 // ─── Section header detection ─────────────────────────────────────────────────
@@ -105,7 +104,7 @@ function writeMixedBold(
   const parts = raw.split(/\*\*(.+?)\*\*/g);
   let cx = x;
   doc.setFontSize(fontSize);
-  doc.setTextColor(...DARK);
+  doc.setTextColor(...BLACK);
   for (let i = 0; i < parts.length; i++) {
     if (!parts[i]) continue;
     doc.setFont("helvetica", i % 2 === 1 ? "bold" : "normal");
@@ -125,36 +124,20 @@ function buildFilename(name: string, label: string, jobTitle: string, company: s
 
 // ─── CV PDF ───────────────────────────────────────────────────────────────────
 
-export function generateCVPdf(cvText: string, jobTitle: string, company: string) {
-  const doc = new jsPDF({ unit: "mm", format: "a4" });
+type ItemType = "name" | "contact" | "separator" | "blank"
+              | "header" | "bold" | "bullet" | "condensed" | "text";
+interface CVItem { type: ItemType; text: string }
 
-  const mL = 18, mR = 18, mT = 15, mB = 15;
-  const cW = PAGE_W - mL - mR;
-
-  const FS_NAME    = 16;
-  const FS_CONTACT = 8.5;
-  const FS_SECTION = 10.5;
-  const FS_BODY    = 9.5;
-  const LH_BODY    = 4.1;
-  const LH_BULLET  = 4.0;
-
-  // ── Clean + split all raw lines ──────────────────────────────────────────────
+function parseCVItems(cvText: string): { items: CVItem[]; candidateName: string } {
   const rawLines = cvText.split(/\r?\n/);
-
-  // Extract candidate name from first non-empty line (for filename only)
   let candidateName = "";
   for (const l of rawLines) {
     const t = plain(cleanLine(l.trim()));
     if (t) { candidateName = t; break; }
   }
 
-  // ── Parse all lines into typed render items ──────────────────────────────────
-  type ItemType = "name" | "contact" | "separator" | "blank"
-                | "header" | "bold" | "bullet" | "condensed" | "text";
-  interface Item { type: ItemType; text: string }
-
-  const items: Item[] = [];
-  let lineState: "header" | "contact" | "body" = "header"; // header = first few lines
+  const items: CVItem[] = [];
+  let lineState: "header" | "body" = "header";
   let headerLinesSeen = 0;
   let curSection = "";
   let pendingBullets: string[] = [];
@@ -175,15 +158,12 @@ export function generateCVPdf(cvText: string, jobTitle: string, company: string)
       continue;
     }
 
-    // ── Header zone: name + contact lines ─────────────────────────────────────
     if (lineState === "header") {
       if (headerLinesSeen === 0) {
-        // First non-empty line → name
         items.push({ type: "name", text: plain(cleaned) });
         headerLinesSeen++;
         continue;
       }
-      // Subsequent lines in header zone: contact info or transition to body
       const isContact =
         cleaned.includes("@") ||
         cleaned.includes("|") ||
@@ -196,12 +176,10 @@ export function generateCVPdf(cvText: string, jobTitle: string, company: string)
         headerLinesSeen++;
         continue;
       }
-      // Not contact — transition to body, add separator, fall through
       items.push({ type: "separator", text: "" });
       lineState = "body";
     }
 
-    // ── Body zone ─────────────────────────────────────────────────────────────
     if (lineState === "body") {
       if (isSectionHeader(cleaned)) {
         flushBullets();
@@ -222,7 +200,6 @@ export function generateCVPdf(cvText: string, jobTitle: string, company: string)
         continue;
       }
 
-      // Whole-line bold: **text**
       if (/^\*\*[^*].+[^*]\*\*$/.test(cleaned) || /^\*\*.+\*\*$/.test(cleaned)) {
         flushBullets();
         items.push({ type: "bold", text: plain(cleaned) });
@@ -235,7 +212,6 @@ export function generateCVPdf(cvText: string, jobTitle: string, company: string)
   }
   flushBullets();
 
-  // Add separator after the last contact line if not yet added
   const hasContact = items.some(i => i.type === "contact");
   const hasSeparator = items.some(i => i.type === "separator");
   if (hasContact && !hasSeparator) {
@@ -243,7 +219,18 @@ export function generateCVPdf(cvText: string, jobTitle: string, company: string)
     items.splice(lastContactIdx + 1, 0, { type: "separator", text: "" });
   }
 
-  // ── Render ───────────────────────────────────────────────────────────────────
+  return { items, candidateName };
+}
+
+interface CVRenderConfig {
+  mL: number; mR: number; mT: number; mB: number;
+  FS_NAME: number; FS_CONTACT: number; FS_SECTION: number;
+  FS_BODY: number; LH_BODY: number; LH_BULLET: number;
+}
+
+function renderCVItems(doc: jsPDF, items: CVItem[], cfg: CVRenderConfig): number {
+  const { mL, mR, mT, FS_NAME, FS_CONTACT, FS_SECTION, FS_BODY, LH_BODY, LH_BULLET } = cfg;
+  const cW = PAGE_W - mL - mR;
   let y = mT;
 
   for (const item of items) {
@@ -259,9 +246,9 @@ export function generateCVPdf(cvText: string, jobTitle: string, company: string)
       case "contact":
         doc.setFont("helvetica", "normal");
         doc.setFontSize(FS_CONTACT);
-        doc.setTextColor(...GREY);
+        doc.setTextColor(...BLACK);
         doc.text(doc.splitTextToSize(item.text, cW)[0], mL, y);
-        y += 4;
+        y += 3.5;
         break;
 
       case "separator":
@@ -292,14 +279,14 @@ export function generateCVPdf(cvText: string, jobTitle: string, company: string)
       case "bold":
         doc.setFont("helvetica", "bold");
         doc.setFontSize(FS_BODY);
-        doc.setTextColor(...DARK);
+        doc.setTextColor(...BLACK);
         y = writeWrapped(doc, item.text, mL, y, cW, LH_BODY);
         break;
 
       case "bullet":
         doc.setFont("helvetica", "normal");
         doc.setFontSize(FS_BODY);
-        doc.setTextColor(...DARK);
+        doc.setTextColor(...BLACK);
         doc.text("–", mL, y);
         y = writeWrapped(doc, item.text, mL + 4.5, y, cW - 4.5, LH_BULLET);
         break;
@@ -307,7 +294,7 @@ export function generateCVPdf(cvText: string, jobTitle: string, company: string)
       case "condensed":
         doc.setFont("helvetica", "normal");
         doc.setFontSize(FS_BODY);
-        doc.setTextColor(...DARK);
+        doc.setTextColor(...BLACK);
         y = writeWrapped(doc, item.text, mL, y, cW, LH_BODY);
         break;
 
@@ -317,17 +304,43 @@ export function generateCVPdf(cvText: string, jobTitle: string, company: string)
         } else {
           doc.setFont("helvetica", "normal");
           doc.setFontSize(FS_BODY);
-          doc.setTextColor(...DARK);
+          doc.setTextColor(...BLACK);
           y = writeWrapped(doc, plain(item.text), mL, y, cW, LH_BODY);
         }
         break;
     }
   }
+  return y;
+}
 
-  doc.save(buildFilename(candidateName, "CV", jobTitle, company));
+const CV_CONFIGS: CVRenderConfig[] = [
+  { mL: 18, mR: 18, mT: 15, mB: 15, FS_NAME: 15,   FS_CONTACT: 8.5, FS_SECTION: 10,  FS_BODY: 10,  LH_BODY: 4.4,  LH_BULLET: 4.3  },
+  { mL: 18, mR: 18, mT: 14, mB: 14, FS_NAME: 14,   FS_CONTACT: 8,   FS_SECTION: 9.5, FS_BODY: 9,   LH_BODY: 4.15, LH_BULLET: 4.05 },
+  { mL: 12, mR: 12, mT: 12, mB: 12, FS_NAME: 13.5, FS_CONTACT: 7.5, FS_SECTION: 9,   FS_BODY: 8.5, LH_BODY: 3.9,  LH_BULLET: 3.8  },
+];
+
+export function generateCVPdf(cvText: string, jobTitle: string, company: string) {
+  const { items, candidateName } = parseCVItems(cvText);
+
+  for (let i = 0; i < CV_CONFIGS.length; i++) {
+    const cfg = CV_CONFIGS[i];
+    const doc = new jsPDF({ unit: "mm", format: "a4" });
+    const finalY = renderCVItems(doc, items, cfg);
+    const maxY = PAGE_H - cfg.mB;
+
+    if (finalY <= maxY || i === CV_CONFIGS.length - 1) {
+      doc.save(buildFilename(candidateName, "CV", jobTitle, company));
+      return;
+    }
+    // Otherwise try next (smaller) config
+  }
 }
 
 // ─── Cover Letter PDF ─────────────────────────────────────────────────────────
+
+function formatDate(date: Date): string {
+  return date.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+}
 
 export function generateCoverLetterPdf(
   letterText: string,
@@ -342,16 +355,20 @@ export function generateCoverLetterPdf(
   const FS = 11;
   const LH = 6;
 
-  const addPage = (): number => { doc.addPage(); return mT; };
-
   let y = mT;
   let prevWasBlank = false;
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(FS);
-  doc.setTextColor(...DARK);
+  doc.setTextColor(...BLACK);
+
+  // Date line at top
+  doc.text(formatDate(new Date()), mL, y);
+  y += LH * 2;
 
   for (const raw of letterText.split(/\r?\n/)) {
+    if (y > PAGE_H - mB) break; // one page only
+
     const cleaned = cleanLine(raw.trim());
 
     if (!cleaned) {
@@ -361,20 +378,13 @@ export function generateCoverLetterPdf(
     }
     prevWasBlank = false;
 
-    if (y > PAGE_H - mB - 10) y = addPage();
-
-    // Render with mixed bold if needed, otherwise plain
-    if (/\*\*/.test(cleaned)) {
-      y = writeMixedBold(doc, cleaned, mL, y, FS, LH);
-    } else {
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(FS);
-      doc.setTextColor(...DARK);
-      for (const seg of doc.splitTextToSize(plain(cleaned), cW)) {
-        if (y > PAGE_H - mB - 10) y = addPage();
-        doc.text(seg, mL, y);
-        y += LH;
-      }
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(FS);
+    doc.setTextColor(...BLACK);
+    for (const seg of doc.splitTextToSize(plain(cleaned), cW)) {
+      if (y > PAGE_H - mB) break;
+      doc.text(seg, mL, y);
+      y += LH;
     }
   }
 
