@@ -2,118 +2,125 @@ import { jsPDF } from "jspdf";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const PAGE_W = 210; // A4 mm
-const PAGE_H = 297; // A4 mm
+const PAGE_W = 210;
+const PAGE_H = 297;
 
 const BLACK: [number, number, number] = [0, 0, 0];
-const DARK: [number, number, number] = [20, 20, 30];
-const GREY: [number, number, number] = [100, 110, 130];
+const DARK:  [number, number, number] = [20, 20, 30];
+const GREY:  [number, number, number] = [100, 110, 130];
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Text cleaning ────────────────────────────────────────────────────────────
 
-/** Strip markdown bold/italic markers */
-function stripMarkdown(text: string): string {
+/**
+ * Strip bracket placeholders and social-media link tokens from any line.
+ * Applied to every line before rendering.
+ */
+function cleanLine(text: string): string {
+  return text
+    // "Label: [placeholder]" pairs — e.g. "LinkedIn: [Link]"
+    .replace(/\b(linkedin|github|portfolio|website|url|profile)\s*:\s*\[[^\]]*\]/gi, "")
+    // Standalone bracket placeholders matching link-related words
+    .replace(/\[(?:link|profile|linkedin|github|url|here|website|portfolio|view)[^\]]*\]/gi, "")
+    // Any remaining short bracket expressions (typically all placeholders in CVs)
+    .replace(/\[[^\]]{1,40}\]/g, "")
+    // Full social URLs
+    .replace(/https?:\/\/(?:www\.)?(?:linkedin|github)\.com\/[^\s|,]*/gi, "")
+    // Bare social tokens
+    .replace(/(?:linkedin|github)\.com\/[^\s|,]*/gi, "")
+    // Orphaned separators after removals
+    .replace(/\s*\|\s*\|\s*/g, " | ")
+    .replace(/^\s*[|·•]\s*/g, "")
+    .replace(/\s*[|·•]\s*$/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+/** Strip markdown bold/italic markers, return plain text */
+function plain(text: string): string {
   return text
     .replace(/\*\*(.+?)\*\*/g, "$1")
     .replace(/\*(.+?)\*/g, "$1")
     .replace(/_(.+?)_/g, "$1");
 }
 
-/**
- * Clean a contact line:
- * - Remove any [Link], [Profile], [LinkedIn], [URL], or similar bracket placeholders
- * - Remove labels that preceded them: "LinkedIn: [Link]", "GitHub: [Profile]", etc.
- * - Remove bare linkedin.com / github.com URLs
- * - Remove orphaned separators
- */
-function cleanContactLine(line: string): string {
-  return line
-    // Remove "Label: [anything]" patterns (LinkedIn: [Link], GitHub: [Profile], etc.)
-    .replace(/\b(linkedin|github|portfolio|website|url|profile)\s*:\s*\[[^\]]*\]/gi, "")
-    // Remove standalone "[Link]", "[Profile]", "[LinkedIn]", "[URL]", "[here]", etc.
-    .replace(/\[(?:link|profile|linkedin|github|url|here|website|portfolio|view)[^\]]*\]/gi, "")
-    // Remove any remaining [anything] in contact lines (always placeholders)
-    .replace(/\[[^\]]{1,30}\]/g, "")
-    // Remove full URLs containing linkedin or github
-    .replace(/https?:\/\/(?:www\.)?(?:linkedin|github)\.com\/[^\s|,]*/gi, "")
-    // Remove bare "linkedin.com/..." and "github.com/..." tokens
-    .replace(/(?:linkedin|github)\.com\/[^\s|,]*/gi, "")
-    // Remove standalone words: "linkedin", "github", "portfolio" (not part of email)
-    .replace(/\b(?:linkedin|github|portfolio)\b[^\s|,]*/gi, "")
-    // Clean up double/leading/trailing separators
-    .replace(/\s*\|\s*\|\s*/g, " | ")
-    .replace(/\s*,\s*,\s*/g, ", ")
-    .replace(/^\s*[|,]\s*/g, "")
-    .replace(/\s*[|,]\s*$/g, "")
-    .replace(/\s{2,}/g, " ")
-    .trim();
-}
+// ─── Section header detection ─────────────────────────────────────────────────
 
-/** Detect whether a line is a known CV section header */
-const SECTION_HEADERS = new Set([
+const KNOWN_HEADERS = new Set([
   "PROFESSIONAL SUMMARY", "SUMMARY", "OBJECTIVE", "PROFILE",
   "EXPERIENCE", "WORK EXPERIENCE", "EMPLOYMENT", "EMPLOYMENT HISTORY",
   "EDUCATION",
   "SKILLS", "TECHNICAL SKILLS", "CORE SKILLS", "KEY SKILLS", "SOFT SKILLS",
-  "PROJECTS",
+  "PROJECTS", "PERSONAL PROJECTS", "SIDE PROJECTS",
   "CERTIFICATIONS", "CERTIFICATES",
-  "ACHIEVEMENTS", "AWARDS",
+  "ACHIEVEMENTS", "AWARDS", "HONORS",
   "LANGUAGES",
   "REFERENCES",
   "INTERESTS", "HOBBIES",
-  "VOLUNTEER", "VOLUNTEERING",
+  "VOLUNTEER", "VOLUNTEERING", "COMMUNITY",
   "PUBLICATIONS",
 ]);
 
-/** Sections whose bullet lists are condensed into one comma-separated line */
-const CONDENSABLE_SECTIONS = new Set([
-  "LANGUAGES", "SOFT SKILLS", "INTERESTS", "HOBBIES", "CERTIFICATIONS", "CERTIFICATES",
+/** Sections condensed to one comma-separated line instead of bullet list */
+const CONDENSABLE = new Set([
+  "LANGUAGES", "SOFT SKILLS", "INTERESTS", "HOBBIES",
 ]);
 
 function isSectionHeader(line: string): boolean {
-  const upper = line.trim().toUpperCase().replace(/[:\-–—]+$/, "").trim();
-  return SECTION_HEADERS.has(upper);
-}
-
-function isBoldLine(line: string): boolean {
   const t = line.trim();
-  return t.startsWith("**") && t.endsWith("**") && t.length > 4;
+  if (!t) return false;
+  // Known header set (normalise away trailing punctuation)
+  const normalised = plain(t).toUpperCase().replace(/[:\-–—]+$/, "").trim();
+  if (KNOWN_HEADERS.has(normalised)) return true;
+  // All-caps short line (≤ 40 chars, no lowercase) ending optionally with colon
+  if (t.length <= 40 && t === t.toUpperCase() && /[A-Z]/.test(t)) return true;
+  return false;
 }
 
 function isBullet(line: string): boolean {
   return /^[-•*]\s/.test(line.trim());
 }
 
-function bulletText(line: string): string {
-  return stripMarkdown(line.trim().replace(/^[-•*]\s+/, ""));
+function extractBulletText(line: string): string {
+  return plain(cleanLine(line.trim().replace(/^[-•*]\s+/, "")));
 }
 
-/** Wrapped text writer — returns new Y */
+// ─── jsPDF helpers ────────────────────────────────────────────────────────────
+
 function writeWrapped(
-  doc: jsPDF,
-  text: string,
-  x: number,
-  y: number,
-  maxW: number,
-  lh: number,
+  doc: jsPDF, text: string,
+  x: number, y: number, maxW: number, lh: number,
 ): number {
-  const segments = doc.splitTextToSize(text, maxW);
-  for (const seg of segments) {
+  for (const seg of doc.splitTextToSize(text, maxW)) {
     doc.text(seg, x, y);
     y += lh;
   }
   return y;
 }
 
-/** Build filename: "[Name] - [Label] - [JobTitle] at [Company].pdf" */
+/** Write a line with mixed bold/normal segments from **markdown** markers */
+function writeMixedBold(
+  doc: jsPDF, raw: string,
+  x: number, y: number, fontSize: number, lh: number,
+): number {
+  const parts = raw.split(/\*\*(.+?)\*\*/g);
+  let cx = x;
+  doc.setFontSize(fontSize);
+  doc.setTextColor(...DARK);
+  for (let i = 0; i < parts.length; i++) {
+    if (!parts[i]) continue;
+    doc.setFont("helvetica", i % 2 === 1 ? "bold" : "normal");
+    doc.text(parts[i], cx, y);
+    cx += doc.getTextWidth(parts[i]);
+  }
+  return y + lh;
+}
+
+// ─── Filename builder ─────────────────────────────────────────────────────────
+
 function buildFilename(name: string, label: string, jobTitle: string, company: string): string {
   const namePart = name || label;
-  const rolePart = jobTitle && company
-    ? `${jobTitle} at ${company}`
-    : jobTitle || company || "";
-  return rolePart
-    ? `${namePart} - ${label} - ${rolePart}.pdf`
-    : `${namePart} - ${label}.pdf`;
+  const role = jobTitle && company ? `${jobTitle} at ${company}` : jobTitle || company || "";
+  return role ? `${namePart} - ${label} - ${role}.pdf` : `${namePart} - ${label}.pdf`;
 }
 
 // ─── CV PDF ───────────────────────────────────────────────────────────────────
@@ -121,223 +128,199 @@ function buildFilename(name: string, label: string, jobTitle: string, company: s
 export function generateCVPdf(cvText: string, jobTitle: string, company: string) {
   const doc = new jsPDF({ unit: "mm", format: "a4" });
 
-  const mL = 18;   // left margin
-  const mR = 18;   // right margin
-  const mT = 15;   // top margin
-  const mB = 15;   // bottom margin
-  const cW = PAGE_W - mL - mR; // content width
+  const mL = 18, mR = 18, mT = 15, mB = 15;
+  const cW = PAGE_W - mL - mR;
 
-  // Font sizes
   const FS_NAME    = 16;
   const FS_CONTACT = 8.5;
   const FS_SECTION = 10.5;
-  const FS_BOLD    = 9.5;
   const FS_BODY    = 9.5;
-  const FS_BULLET  = 9.5;
+  const LH_BODY    = 4.1;
+  const LH_BULLET  = 4.0;
 
-  // Line heights (mm) — tight 1.2 spacing
-  const LH_BODY   = 4.1;
-  const LH_BULLET = 4.0;
-
-  // ── Parse raw lines ──────────────────────────────────────────────────────────
+  // ── Clean + split all raw lines ──────────────────────────────────────────────
   const rawLines = cvText.split(/\r?\n/);
 
-  // 1. Candidate name — first non-empty line
+  // Extract candidate name from first non-empty line (for filename only)
   let candidateName = "";
-  let idx = 0;
-  for (; idx < rawLines.length; idx++) {
-    const l = rawLines[idx].trim();
-    if (l) { candidateName = stripMarkdown(l); idx++; break; }
+  for (const l of rawLines) {
+    const t = plain(cleanLine(l.trim()));
+    if (t) { candidateName = t; break; }
   }
 
-  // 2. Contact lines — next non-empty lines that look like contact info
-  const rawContactPieces: string[] = [];
-  let bodyStart = idx;
-  for (let i = idx; i < Math.min(idx + 5, rawLines.length); i++) {
-    const l = rawLines[i].trim();
-    if (!l) continue;
-    if (
-      l.includes("@") ||
-      l.includes("|") ||
-      /\+?\d[\d\s\-().]{5,}/.test(l) ||
-      /\b(phone|email|tel|mobile|city|location|address)\b/i.test(l) ||
-      // catch lines that are ONLY link placeholders (so we skip them entirely after cleaning)
-      /^\[.+\]$/.test(l)
-    ) {
-      const cleaned = cleanContactLine(stripMarkdown(l));
-      if (cleaned) rawContactPieces.push(cleaned);
-      bodyStart = i + 1;
-    } else {
-      break;
-    }
-  }
+  // ── Parse all lines into typed render items ──────────────────────────────────
+  type ItemType = "name" | "contact" | "separator" | "blank"
+                | "header" | "bold" | "bullet" | "condensed" | "text";
+  interface Item { type: ItemType; text: string }
 
-  // Flatten all contact pieces into one pipe-separated line
-  const contactLine = rawContactPieces
-    .join(" | ")
-    .replace(/\s*\|\s*\|\s*/g, " | ")
-    .replace(/^\s*\|\s*/, "")
-    .replace(/\s*\|\s*$/, "")
-    .trim();
-
-  // 3. Body lines (from bodyStart onward)
-  const bodyLines = rawLines.slice(bodyStart);
-
-  // ── Pre-process: condense bullet lists inside CONDENSABLE_SECTIONS ───────────
-  interface BodyItem {
-    type: "blank" | "header" | "bold" | "bullet" | "text" | "condensed";
-    raw: string;        // original text (stripped)
-    section?: string;   // for header: normalised section name
-  }
-
-  const items: BodyItem[] = [];
+  const items: Item[] = [];
+  let lineState: "header" | "contact" | "body" = "header"; // header = first few lines
+  let headerLinesSeen = 0;
   let curSection = "";
   let pendingBullets: string[] = [];
 
   const flushBullets = () => {
-    if (pendingBullets.length === 0) return;
-    items.push({ type: "condensed", raw: pendingBullets.join(", ") });
+    if (!pendingBullets.length) return;
+    items.push({ type: "condensed", text: pendingBullets.join(", ") });
     pendingBullets = [];
   };
 
-  for (const raw of bodyLines) {
-    const trimmed = raw.trim();
-
-    if (!trimmed) {
-      flushBullets();
-      items.push({ type: "blank", raw: "" });
-      continue;
-    }
-
-    if (isSectionHeader(trimmed)) {
-      flushBullets();
-      const sectionName = stripMarkdown(trimmed).toUpperCase().replace(/[:\-–—]+$/, "").trim();
-      curSection = sectionName;
-      items.push({ type: "header", raw: sectionName, section: sectionName });
-      continue;
-    }
-
-    if (isBullet(trimmed)) {
-      const text = bulletText(trimmed);
-      if (CONDENSABLE_SECTIONS.has(curSection)) {
-        pendingBullets.push(text);
-      } else {
+  for (const raw of rawLines) {
+    const cleaned = cleanLine(raw.trim());
+    if (!cleaned) {
+      if (lineState === "body") {
         flushBullets();
-        items.push({ type: "bullet", raw: text });
+        items.push({ type: "blank", text: "" });
       }
       continue;
     }
 
-    if (isBoldLine(trimmed)) {
-      flushBullets();
-      items.push({ type: "bold", raw: stripMarkdown(trimmed.replace(/^\*\*|\*\*$/g, "")) });
-      continue;
+    // ── Header zone: name + contact lines ─────────────────────────────────────
+    if (lineState === "header") {
+      if (headerLinesSeen === 0) {
+        // First non-empty line → name
+        items.push({ type: "name", text: plain(cleaned) });
+        headerLinesSeen++;
+        continue;
+      }
+      // Subsequent lines in header zone: contact info or transition to body
+      const isContact =
+        cleaned.includes("@") ||
+        cleaned.includes("|") ||
+        cleaned.includes("·") ||
+        /\+?\d[\d\s\-().]{5,}/.test(cleaned) ||
+        /\b(phone|email|tel|mobile|city|location|address)\b/i.test(cleaned);
+
+      if (isContact) {
+        items.push({ type: "contact", text: plain(cleaned) });
+        headerLinesSeen++;
+        continue;
+      }
+      // Not contact — transition to body, add separator, fall through
+      items.push({ type: "separator", text: "" });
+      lineState = "body";
     }
 
-    // Inline bold or plain text
-    flushBullets();
-    items.push({ type: "text", raw: trimmed });
+    // ── Body zone ─────────────────────────────────────────────────────────────
+    if (lineState === "body") {
+      if (isSectionHeader(cleaned)) {
+        flushBullets();
+        const label = plain(cleaned).toUpperCase().replace(/[:\-–—]+$/, "").trim();
+        curSection = label;
+        items.push({ type: "header", text: label });
+        continue;
+      }
+
+      if (isBullet(cleaned)) {
+        const bt = extractBulletText(cleaned);
+        if (CONDENSABLE.has(curSection)) {
+          pendingBullets.push(bt);
+        } else {
+          flushBullets();
+          items.push({ type: "bullet", text: bt });
+        }
+        continue;
+      }
+
+      // Whole-line bold: **text**
+      if (/^\*\*[^*].+[^*]\*\*$/.test(cleaned) || /^\*\*.+\*\*$/.test(cleaned)) {
+        flushBullets();
+        items.push({ type: "bold", text: plain(cleaned) });
+        continue;
+      }
+
+      flushBullets();
+      items.push({ type: "text", text: cleaned });
+    }
   }
   flushBullets();
+
+  // Add separator after the last contact line if not yet added
+  const hasContact = items.some(i => i.type === "contact");
+  const hasSeparator = items.some(i => i.type === "separator");
+  if (hasContact && !hasSeparator) {
+    const lastContactIdx = items.map(i => i.type).lastIndexOf("contact");
+    items.splice(lastContactIdx + 1, 0, { type: "separator", text: "" });
+  }
 
   // ── Render ───────────────────────────────────────────────────────────────────
   let y = mT;
 
-  // Name
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(FS_NAME);
-  doc.setTextColor(...BLACK);
-  doc.text(candidateName || "Candidate", mL, y);
-  y += 6.5;
-
-  // Contact — single line
-  if (contactLine) {
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(FS_CONTACT);
-    doc.setTextColor(...GREY);
-    // Truncate to page width if needed
-    const contactSegments = doc.splitTextToSize(contactLine, cW);
-    doc.text(contactSegments[0], mL, y); // only first line — contact should fit
-    y += 4.5;
-  }
-
-  y += 1;
-
-  // Separator
-  doc.setDrawColor(...BLACK);
-  doc.setLineWidth(0.5);
-  doc.line(mL, y, PAGE_W - mR, y);
-  y += 4.5;
-
-  // Body items
   for (const item of items) {
     switch (item.type) {
+      case "name":
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(FS_NAME);
+        doc.setTextColor(...BLACK);
+        doc.text(item.text, mL, y);
+        y += 6;
+        break;
+
+      case "contact":
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(FS_CONTACT);
+        doc.setTextColor(...GREY);
+        doc.text(doc.splitTextToSize(item.text, cW)[0], mL, y);
+        y += 4;
+        break;
+
+      case "separator":
+        y += 2;
+        doc.setDrawColor(...BLACK);
+        doc.setLineWidth(0.5);
+        doc.line(mL, y, PAGE_W - mR, y);
+        y += 4;
+        break;
+
       case "blank":
         y += 1.5;
         break;
 
-      case "header": {
+      case "header":
         y += 2.5;
         doc.setFont("helvetica", "bold");
         doc.setFontSize(FS_SECTION);
         doc.setTextColor(...BLACK);
-        doc.text(item.raw, mL, y);
+        doc.text(item.text, mL, y);
         y += 1.2;
         doc.setDrawColor(...BLACK);
         doc.setLineWidth(0.25);
         doc.line(mL, y, PAGE_W - mR, y);
         y += 3.5;
         break;
-      }
 
-      case "bold": {
+      case "bold":
         doc.setFont("helvetica", "bold");
-        doc.setFontSize(FS_BOLD);
+        doc.setFontSize(FS_BODY);
         doc.setTextColor(...DARK);
-        y = writeWrapped(doc, item.raw, mL, y, cW, LH_BODY);
+        y = writeWrapped(doc, item.text, mL, y, cW, LH_BODY);
         break;
-      }
 
-      case "bullet": {
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(FS_BULLET);
-        doc.setTextColor(...DARK);
-        doc.text("–", mL, y);
-        y = writeWrapped(doc, item.raw, mL + 4.5, y, cW - 4.5, LH_BULLET);
-        break;
-      }
-
-      case "condensed": {
-        // Single line for condensable sections (Languages, Soft Skills, etc.)
+      case "bullet":
         doc.setFont("helvetica", "normal");
         doc.setFontSize(FS_BODY);
         doc.setTextColor(...DARK);
-        y = writeWrapped(doc, item.raw, mL, y, cW, LH_BODY);
+        doc.text("–", mL, y);
+        y = writeWrapped(doc, item.text, mL + 4.5, y, cW - 4.5, LH_BULLET);
         break;
-      }
 
-      case "text": {
-        // Handle inline bold segments
-        if (/\*\*/.test(item.raw)) {
-          const parts = item.raw.split(/\*\*(.+?)\*\*/g);
-          let x = mL;
-          doc.setFontSize(FS_BODY);
-          doc.setTextColor(...DARK);
-          for (let p = 0; p < parts.length; p++) {
-            if (!parts[p]) continue;
-            doc.setFont("helvetica", p % 2 === 1 ? "bold" : "normal");
-            doc.text(parts[p], x, y);
-            x += doc.getTextWidth(parts[p]);
-          }
-          y += LH_BODY;
+      case "condensed":
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(FS_BODY);
+        doc.setTextColor(...DARK);
+        y = writeWrapped(doc, item.text, mL, y, cW, LH_BODY);
+        break;
+
+      case "text":
+        if (/\*\*/.test(item.text)) {
+          y = writeMixedBold(doc, item.text, mL, y, FS_BODY, LH_BODY);
         } else {
           doc.setFont("helvetica", "normal");
           doc.setFontSize(FS_BODY);
           doc.setTextColor(...DARK);
-          y = writeWrapped(doc, stripMarkdown(item.raw), mL, y, cW, LH_BODY);
+          y = writeWrapped(doc, plain(item.text), mL, y, cW, LH_BODY);
         }
         break;
-      }
     }
   }
 
@@ -354,85 +337,45 @@ export function generateCoverLetterPdf(
 ) {
   const doc = new jsPDF({ unit: "mm", format: "a4" });
 
-  const mL = 25;
-  const mR = 25;
-  const mT = 28;
-  const mB = 15;
+  const mL = 25, mR = 25, mT = 28, mB = 15;
   const cW = PAGE_W - mL - mR;
+  const FS = 11;
+  const LH = 6;
 
   const addPage = (): number => { doc.addPage(); return mT; };
 
   let y = mT;
+  let prevWasBlank = false;
 
-  // Name header
-  if (candidateName) {
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
-    doc.setTextColor(...BLACK);
-    doc.text(candidateName, mL, y);
-    y += 7;
-    doc.setDrawColor(...BLACK);
-    doc.setLineWidth(0.4);
-    doc.line(mL, y, mL + 60, y);
-    y += 10;
-  }
-
-  // Date
-  const dateStr = new Date().toLocaleDateString("en-GB", {
-    day: "numeric", month: "long", year: "numeric",
-  });
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(10);
-  doc.setTextColor(...GREY);
-  doc.text(dateStr, mL, y);
-  y += 10;
-
-  // Body
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(11);
+  doc.setFontSize(FS);
   doc.setTextColor(...DARK);
 
-  let prevWasEmpty = false;
   for (const raw of letterText.split(/\r?\n/)) {
-    const trimmed = raw.trim();
+    const cleaned = cleanLine(raw.trim());
 
-    if (!trimmed) {
-      if (!prevWasEmpty) y += 4;
-      prevWasEmpty = true;
+    if (!cleaned) {
+      if (!prevWasBlank) y += 5; // paragraph gap
+      prevWasBlank = true;
       continue;
     }
-    prevWasEmpty = false;
+    prevWasBlank = false;
 
     if (y > PAGE_H - mB - 10) y = addPage();
 
-    const lower = trimmed.toLowerCase();
-    if (
-      lower.startsWith("sincerely") ||
-      lower.startsWith("regards") ||
-      lower.startsWith("best regards") ||
-      lower.startsWith("kind regards") ||
-      lower.startsWith("yours sincerely")
-    ) {
-      y += 2;
-      doc.setFont("helvetica", "italic");
-      doc.text(stripMarkdown(trimmed), mL, y);
-      y += 8;
-      if (candidateName) {
-        doc.setFont("helvetica", "bold");
-        doc.text(candidateName, mL, y);
-        y += 6;
-      }
-      continue;
-    }
-
-    const lines = doc.splitTextToSize(stripMarkdown(trimmed), cW);
-    for (const line of lines) {
-      if (y > PAGE_H - mB - 10) y = addPage();
+    // Render with mixed bold if needed, otherwise plain
+    if (/\*\*/.test(cleaned)) {
+      y = writeMixedBold(doc, cleaned, mL, y, FS, LH);
+    } else {
       doc.setFont("helvetica", "normal");
-      doc.text(line, mL, y);
-      y += 6;
+      doc.setFontSize(FS);
+      doc.setTextColor(...DARK);
+      for (const seg of doc.splitTextToSize(plain(cleaned), cW)) {
+        if (y > PAGE_H - mB - 10) y = addPage();
+        doc.text(seg, mL, y);
+        y += LH;
+      }
     }
-    y += 1;
   }
 
   doc.save(buildFilename(candidateName, "Cover Letter", jobTitle, company));
