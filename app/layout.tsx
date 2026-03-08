@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter, Space_Grotesk } from "next/font/google";
+import { Analytics } from "@vercel/analytics/react";
 import "./globals.css";
 
 const inter = Inter({
@@ -28,6 +29,7 @@ export default function RootLayout({
         className={`${inter.variable} ${display.variable} antialiased min-h-screen bg-[#060a14] text-slate-100`}
       >
         {children}
+        <Analytics />
       </body>
     </html>
   );

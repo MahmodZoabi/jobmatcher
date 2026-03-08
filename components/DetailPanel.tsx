@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import ScoreRing from "./ScoreRing";
 import type { JobWithMeta } from "./JobCard";
+import { generateCVPdf, generateCoverLetterPdf } from "@/lib/pdfTemplates";
 
 type JobWithExtras = JobWithMeta & {
   coverLetter?: string;
@@ -181,6 +182,8 @@ const CoverLetterTab: React.FC<{
   const [error, setError] = useState<string | null>(null);
   const [serversBusy, setServersBusy] = useState(false);
 
+  const candidateName = cvText.split(/\r?\n/).find((l) => l.trim())?.trim() ?? "";
+
   const handleGenerate = async () => {
     setLoading(true);
     setError(null);
@@ -253,13 +256,27 @@ const CoverLetterTab: React.FC<{
 
   return (
     <div className="flex flex-col gap-3 pb-4">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         <button
           type="button"
           onClick={handleCopy}
           className="inline-flex items-center gap-1.5 rounded-full bg-slate-800 border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-200 hover:border-[#3b82f6]/50 hover:text-white transition"
         >
           {copied ? "✓ Copied!" : "Copy to clipboard"}
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            generateCoverLetterPdf(
+              job.coverLetter!,
+              candidateName,
+              job.title ?? "",
+              job.company ?? "",
+            )
+          }
+          className="inline-flex items-center gap-1.5 rounded-full bg-slate-800 border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-200 hover:border-[#3b82f6]/50 hover:text-white transition"
+        >
+          Download PDF
         </button>
         <button
           type="button"
@@ -322,11 +339,11 @@ const TailoredCVTab: React.FC<{
   };
 
   const handleDownload = () => {
-    const text = view === "tailored" ? job.tailoredCV! : cvText;
-    const filename = view === "tailored"
-      ? `tailored-cv-${job.company || "job"}.txt`.toLowerCase().replace(/\s+/g, "-")
-      : "original-cv.txt";
-    downloadTxt(text, filename);
+    if (view === "tailored") {
+      generateCVPdf(job.tailoredCV!, job.title ?? "", job.company ?? "");
+    } else {
+      downloadTxt(cvText, "original-cv.txt");
+    }
   };
 
   const changes = job.changes ?? [];
@@ -425,7 +442,7 @@ const TailoredCVTab: React.FC<{
           onClick={handleDownload}
           className="inline-flex items-center gap-1.5 rounded-full bg-slate-800 border border-slate-700 px-3 py-1 text-xs font-medium text-slate-200 hover:border-slate-500 transition"
         >
-          Download .txt
+          {view === "tailored" ? "Download PDF" : "Download .txt"}
         </button>
         <button
           type="button"
